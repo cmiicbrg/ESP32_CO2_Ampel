@@ -1,7 +1,5 @@
 # CO<sub>2</sub> Indicator Light
 
-This CO<sub>2</sub> indicator light uses readily available components. 
-
 ## Hardware
 
 * ESP32 Development Board
@@ -35,7 +33,7 @@ You should be able to do a build for around USD 22,00
     | < 2000 | g | y | o | |
     | < 2600 | g | y | o | r |
     | >= 3000 | g | r | r | r |
-    
+
   So LED 3 and 8 can be seen as indicator for proper cabling/powering of the LEDs.
   800 ppm is some target referred to in some publications, for classroom-settings this is rather hard to achieve.
 * Use a Bluetooth client like NRF Connect to connect. CO<sub>2</sub> ppm will be the only characteristic available right now.
@@ -50,4 +48,4 @@ If you want to configure initial WIFI and InfluxDB you may want to set following
 If you don't set the vars, WIFI or INFLUX DB client will fail gracefully and you will still be able to get a reading using the LEDs or Bluetooth
 
 ## Wiring
-For 38 Pin ESP32
+For 38 Pin ESP32 see [docs/wiring38.md](docs/wiring38.md)
