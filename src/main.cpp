@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClient.h>
+
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
@@ -14,10 +16,7 @@
 #include <Adafruit_BME280.h>
 
 /* WiFi */
-const char *ssid = "***";
-const char *password = "***";
 bool isWiFiOK = true;
-
 IPAddress softAPIP;
 
 /* BLE */
@@ -36,9 +35,6 @@ unsigned long getDataTimer = 0;
 int lastCO2 = 0;
 
 /* Influx DB */
-#define INFLUXDB_URL "***"
-#define INFLUXDB_DB_NAME "***"
-
 InfluxDBClient client(INFLUXDB_URL, INFLUXDB_DB_NAME);
 Point sensor("Environment");
 
@@ -110,6 +106,7 @@ void readCO2()
       sensor.addField("humidity", bme.readHumidity());
       sensor.addField("pressure", bme.readPressure());
     }
+
     client.writePoint(sensor);
   }
 }
@@ -131,7 +128,7 @@ void setup()
 
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
   if (WiFi.waitForConnectResult() != WL_CONNECTED)
   {
     isWiFiOK = false;
