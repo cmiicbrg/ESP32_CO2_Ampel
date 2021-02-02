@@ -4,4 +4,4 @@
 
 # Circuit Diagram
 
-![Circuit](CO2_Ampel_Steckplatine.png)
+![Circuit](CO2_Ampel_Schaltplan.png)
