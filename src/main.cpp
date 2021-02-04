@@ -1,6 +1,8 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
+#include <FS.h>          // this needs to be first, or it all crashes and burns...
+#include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
+#include <ArduinoJson.h> // https://github.com/bblanchon/ArduinoJson
+#include <SPIFFS.h>
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -17,7 +19,8 @@
 
 /* WiFi */
 bool isWiFiOK = true;
-IPAddress softAPIP;
+char influxDBURL[40] = "";
+char influxDBName[32] = "";
 
 /* BLE */
 #define SERVICE_UUID "7ec15f94-396e-11eb-adc1-0242ac120002"
@@ -83,7 +86,6 @@ void readCO2()
   float CO2;
   CO2 = myMHZ19.getCO2(); // Request CO2 (as ppm)
 
-
   showCO2(CO2);
   showTemp(temp);
   FastLED.show();
@@ -106,7 +108,6 @@ void readCO2()
       sensor.addField("humidity", bme.readHumidity());
       sensor.addField("pressure", bme.readPressure());
     }
-
     client.writePoint(sensor);
   }
 }
@@ -121,24 +122,120 @@ void initFastLED()
   FastLED.show();
 }
 
+//callback notifying us of the need to save config
+void saveConfigCallback()
+{
+  Serial.println("Should save config");
+}
+
+void setupSpiffs()
+{
+  //clean FS, for testing
+  //SPIFFS.format();
+
+  //read configuration from FS json
+  Serial.println("mounting FS...");
+
+  if (SPIFFS.begin())
+  {
+    if (SPIFFS.exists("/config.json"))
+    {
+      //file exists, reading and loading
+      File configFile = SPIFFS.open("/config.json", "r");
+      if (configFile)
+      {
+        size_t size = configFile.size();
+        // Allocate a buffer to store contents of the file.
+        std::unique_ptr<char[]> buf(new char[size]);
+
+        configFile.readBytes(buf.get(), size);
+        DynamicJsonDocument jsonDoc(1024);
+        deserializeJson(jsonDoc, buf.get());
+
+        strcpy(influxDBURL, jsonDoc["influxDBURL"]);
+        strcpy(influxDBName, jsonDoc["influxDBNameID"]);
+      }
+      else
+      {
+        Serial.println("failed to load json config");
+      }
+    }
+    else
+    {
+      Serial.println("/config.json does not exist (yet)");
+    }
+  }
+  else
+  {
+    Serial.println("failed to mount FS");
+  }
+}
+
 void setup()
 {
+  Serial.begin(115200);
   setChipId();
-  Serial.begin(115200); //
+  setupSpiffs(); // read params from config.json
 
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
+#ifdef INFLUXDB_URL
+  if (strcmp(influxDBURL, "") == 0)
+  {
+    strcpy(influxDBURL, INFLUXDB_URL);
+  }
+#endif
 
+#ifdef INFLUXDB_DB_NAME
+  if (strcmp(influxDBName, "") == 0)
+  {
+    strcpy(influxDBName, INFLUXDB_DB_NAME);
+  }
+#endif
+
+#ifdef WIFI_SSID
+#ifdef WIFI_PASS
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  if (WiFi.waitForConnectResult() != WL_CONNECTED)
+#endif
+#endif
+
+  WiFiManager wm;
+  wm.setDebugOutput(false);
+  wm.setSaveConfigCallback(saveConfigCallback);
+
+  WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL", influxDBURL, 40);
+  WiFiManagerParameter influxDBNameParam("influxDBNameID", "Influx DB Name", influxDBName, 32);
+
+  wm.addParameter(&influxDBURLParam);
+  wm.addParameter(&influxDBNameParam);
+
+  wm.setConnectTimeout(10);
+  wm.setConfigPortalTimeout(45);
+
+  wm.setClass("invert");
+
+  isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
+
+  if (influxDBURL != influxDBURLParam.getValue() || influxDBName != influxDBNameParam.getValue())
   {
-    isWiFiOK = false;
+    strcpy(influxDBURL, influxDBURLParam.getValue());
+    strcpy(influxDBName, influxDBNameParam.getValue());
+
+    DynamicJsonDocument jsonDoc(1024);
+
+    jsonDoc["influxDBURL"] = influxDBURL;
+    jsonDoc["influxDBNameID"] = influxDBName;
+
+    File configFile = SPIFFS.open("/config.json", "w");
+    if (!configFile)
+    {
+      Serial.println("failed to open config file for writing");
+    }
+
+    serializeJson(jsonDoc, configFile);
+
+    configFile.close();
   }
-  if (isWiFiOK)
-  {
-    Serial.println();
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-  }
+
   myMHZ19.begin(mySerial);
   myMHZ19.setRange(5000);
 
@@ -189,7 +286,6 @@ void loop()
     pCharacteristic->setValue(String(lastCO2).c_str());
     if (deviceConnected)
     {
-
       pCharacteristic->notify();
     }
   }
