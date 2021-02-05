@@ -17,12 +17,19 @@
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 
-#define CO2_DEBUG false
+#define CO2_WIFI_DEBUG false
+#define CO2_LIGHT_DEBUG false
 
 /* WiFi */
 bool isWiFiOK = true;
 char influxDBURL[40] = "";
 char influxDBName[32] = "";
+#define START_SETUP_PIN 0
+bool shouldShowPortal = false;
+bool portalRunning = false;
+WiFiManager wm;
+WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL");
+WiFiManagerParameter influxDBNameParam("influxDBNameID", "Influx DB Name");
 
 /* BLE */
 #define SERVICE_UUID "7ec15f94-396e-11eb-adc1-0242ac120002"
@@ -40,7 +47,7 @@ unsigned long getDataTimer = 0;
 int lastCO2 = 0;
 
 /* Influx DB */
-InfluxDBClient client(INFLUXDB_URL, INFLUXDB_DB_NAME);
+InfluxDBClient client;
 Point sensor("Environment");
 
 /* BME280 */
@@ -82,6 +89,7 @@ class MyServerCallbacks : public BLEServerCallbacks
 
 void readCO2()
 {
+
   bme.takeForcedMeasurement();
   float temp = bme.readTemperature();
 
@@ -122,12 +130,6 @@ void initFastLED()
   setPixel(2, green[0]);
   setPixel(4, green[0]);
   FastLED.show();
-}
-
-//callback notifying us of the need to save config
-void saveConfigCallback()
-{
-  Serial.println("Should save config");
 }
 
 void setupSpiffs()
@@ -173,44 +175,10 @@ void setupSpiffs()
   }
 }
 
-void setupWifi()
+void saveParams()
 {
-// Use Buildflags for faster deployment in Schools
-#if defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME)
-  if (strcmp(influxDBName, "") == 0 && strcmp(influxDBName, "") == 0)
-  {
-    strcpy(influxDBURL, INFLUXDB_URL);
-    strcpy(influxDBName, INFLUXDB_DB_NAME);
-  }
-#endif
 
-#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME) // all set just start wifi
-  WiFi.mode(WIFI_STA);
-  if (WiFi.psk() == "")
-  {
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-  }
-#endif
-
-  WiFiManager wm;
-
-  wm.setDebugOutput(CO2_DEBUG); 
-  wm.setSaveConfigCallback(saveConfigCallback);
-
-  WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL", influxDBURL, 40);
-  WiFiManagerParameter influxDBNameParam("influxDBNameID", "Influx DB Name", influxDBName, 32);
-
-  wm.addParameter(&influxDBURLParam);
-  wm.addParameter(&influxDBNameParam);
-
-  wm.setConnectTimeout(10);
-  wm.setConfigPortalTimeout(45);
-
-  wm.setClass("invert");
-  wm.setHostname(("CO2 Ampel " + to_string(chipId)).c_str());
-
-  isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
-
+  Serial.println("Save params");
   if (influxDBURL != influxDBURLParam.getValue() || influxDBName != influxDBNameParam.getValue())
   {
     strcpy(influxDBURL, influxDBURLParam.getValue());
@@ -230,7 +198,53 @@ void setupWifi()
     serializeJson(jsonDoc, configFile);
 
     configFile.close();
+    client.setConnectionParamsV1(influxDBURL, influxDBName);
   }
+}
+
+void setupWifi()
+{
+// Use Buildflags for faster deployment in Schools
+#if defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME)
+  if (strcmp(influxDBName, "") == 0 && strcmp(influxDBName, "") == 0)
+  {
+    strcpy(influxDBURL, INFLUXDB_URL);
+    strcpy(influxDBName, INFLUXDB_DB_NAME);
+  }
+#endif
+
+#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME) // all set just start wifi
+  WiFi.mode(WIFI_STA);
+  if (WiFi.psk() == "")
+  {
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+  }
+#endif
+
+  wm.setDebugOutput(CO2_WIFI_DEBUG);
+
+  influxDBURLParam.setValue(influxDBURL, 40);
+  influxDBNameParam.setValue(influxDBName, 32);
+
+  wm.addParameter(&influxDBURLParam);
+  wm.addParameter(&influxDBNameParam);
+
+  wm.setSaveParamsCallback(saveParams);
+  std::vector<const char *> menu = {"wifi", "info", "param", "sep", "restart", "exit"};
+  wm.setMenu(menu);
+
+  wm.setConnectTimeout(10);
+  wm.setConfigPortalTimeout(45);
+
+  wm.setClass("invert");
+  wm.setHostname(("CO2 Ampel " + to_string(chipId)).c_str());
+
+  isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
+}
+
+void toggleShouldStartPortal()
+{
+  shouldShowPortal = !shouldShowPortal;
 }
 
 void setup()
@@ -240,6 +254,11 @@ void setup()
   setupSpiffs(); // read params from config.json
 
   setupWifi();
+
+  pinMode(START_SETUP_PIN, INPUT_PULLUP);
+  attachInterrupt(START_SETUP_PIN, toggleShouldStartPortal, FALLING);
+
+  client.setConnectionParamsV1(influxDBURL, influxDBName);
 
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
   myMHZ19.begin(mySerial);
@@ -295,5 +314,20 @@ void loop()
     {
       pCharacteristic->notify();
     }
+  }
+  if (shouldShowPortal && !portalRunning)
+  {
+    wm.startWebPortal();
+
+    portalRunning = true;
+  }
+  else if (!shouldShowPortal && portalRunning)
+  {
+    wm.stopWebPortal();
+    portalRunning = false;
+  }
+  if (portalRunning)
+  {
+    wm.process();
   }
 }
