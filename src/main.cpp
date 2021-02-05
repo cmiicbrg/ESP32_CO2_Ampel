@@ -17,6 +17,8 @@
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 
+#define CO2_DEBUG false
+
 /* WiFi */
 bool isWiFiOK = true;
 char influxDBURL[40] = "";
@@ -171,35 +173,28 @@ void setupSpiffs()
   }
 }
 
-void setup()
+void setupWifi()
 {
-  Serial.begin(115200);
-  setChipId();
-  setupSpiffs(); // read params from config.json
-
-  mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
-#ifdef INFLUXDB_URL
-  if (strcmp(influxDBURL, "") == 0)
+// Use Buildflags for faster deployment in Schools
+#if defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME)
+  if (strcmp(influxDBName, "") == 0 && strcmp(influxDBName, "") == 0)
   {
     strcpy(influxDBURL, INFLUXDB_URL);
-  }
-#endif
-
-#ifdef INFLUXDB_DB_NAME
-  if (strcmp(influxDBName, "") == 0)
-  {
     strcpy(influxDBName, INFLUXDB_DB_NAME);
   }
 #endif
 
-#ifdef WIFI_SSID
-#ifdef WIFI_PASS
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-#endif
+#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME) // all set just start wifi
+  WiFi.mode(WIFI_STA);
+  if (WiFi.psk() == "")
+  {
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+  }
 #endif
 
   WiFiManager wm;
-  wm.setDebugOutput(false);
+
+  wm.setDebugOutput(CO2_DEBUG); 
   wm.setSaveConfigCallback(saveConfigCallback);
 
   WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL", influxDBURL, 40);
@@ -212,6 +207,7 @@ void setup()
   wm.setConfigPortalTimeout(45);
 
   wm.setClass("invert");
+  wm.setHostname(("CO2 Ampel " + to_string(chipId)).c_str());
 
   isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
 
@@ -235,7 +231,17 @@ void setup()
 
     configFile.close();
   }
+}
 
+void setup()
+{
+  Serial.begin(115200);
+  setChipId();
+  setupSpiffs(); // read params from config.json
+
+  setupWifi();
+
+  mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
   myMHZ19.begin(mySerial);
   myMHZ19.setRange(5000);
 
@@ -282,6 +288,7 @@ void loop()
 {
   if (millis() - getDataTimer > 30000)
   {
+    isWiFiOK = WiFi.status() == WL_CONNECTED;
     readCO2();
     pCharacteristic->setValue(String(lastCO2).c_str());
     if (deviceConnected)
