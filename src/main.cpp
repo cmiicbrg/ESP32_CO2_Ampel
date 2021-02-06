@@ -21,15 +21,21 @@
 #define CO2_LIGHT_DEBUG false
 
 /* WiFi */
-bool isWiFiOK = true;
+#define START_SETUP_PIN 0
+
+bool isWiFiOK = false;
 char influxDBURL[40] = "";
 char influxDBName[32] = "";
-#define START_SETUP_PIN 0
+char useWifi[2] = "1";
+char useBLE[2] = "1";
 bool shouldShowPortal = false;
 bool portalRunning = false;
+
 WiFiManager wm;
 WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL");
 WiFiManagerParameter influxDBNameParam("influxDBNameID", "Influx DB Name");
+WiFiManagerParameter useWifiParam("useWifiID", "Use Wifi 1/0", useWifi, 2);
+WiFiManagerParameter useBLEParam("useBLEID", "Use BLE 1/0", useBLE, 2);
 
 /* BLE */
 #define SERVICE_UUID "7ec15f94-396e-11eb-adc1-0242ac120002"
@@ -132,11 +138,8 @@ void initFastLED()
   FastLED.show();
 }
 
-void setupSpiffs()
+void loadParamsFromSpiffs()
 {
-  //clean FS, for testing
-  //SPIFFS.format();
-
   //read configuration from FS json
   Serial.println("mounting FS...");
 
@@ -156,8 +159,22 @@ void setupSpiffs()
         DynamicJsonDocument jsonDoc(1024);
         deserializeJson(jsonDoc, buf.get());
 
-        strcpy(influxDBURL, jsonDoc["influxDBURL"]);
-        strcpy(influxDBName, jsonDoc["influxDBNameID"]);
+        if (jsonDoc.containsKey("influxDBURL"))
+        {
+          strcpy(influxDBURL, jsonDoc["influxDBURL"]);
+        }
+        if (jsonDoc.containsKey("influxDBName"))
+        {
+          strcpy(influxDBName, jsonDoc["influxDBName"]);
+        }
+        if (jsonDoc.containsKey("useWifi"))
+        {
+          strcpy(useWifi, jsonDoc["useWifi"]);
+        }
+        if (jsonDoc.containsKey("useBLE"))
+        {
+          strcpy(useBLE, jsonDoc["useBLE"]);
+        }
       }
       else
       {
@@ -183,11 +200,15 @@ void saveParams()
   {
     strcpy(influxDBURL, influxDBURLParam.getValue());
     strcpy(influxDBName, influxDBNameParam.getValue());
+    strcpy(useWifi, useWifiParam.getValue());
+    strcpy(useBLE, useBLEParam.getValue());
 
     DynamicJsonDocument jsonDoc(1024);
 
     jsonDoc["influxDBURL"] = influxDBURL;
-    jsonDoc["influxDBNameID"] = influxDBName;
+    jsonDoc["influxDBName"] = influxDBName;
+    jsonDoc["useWifi"] = useWifi;
+    jsonDoc["useBLE"] = useBLE;
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile)
@@ -213,9 +234,9 @@ void setupWifi()
   }
 #endif
 
-#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME) // all set just start wifi
+#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME) // all set start wifi
   WiFi.mode(WIFI_STA);
-  if (WiFi.psk() == "")
+  if (WiFi.psk() == "") // Only on first run
   {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
@@ -225,21 +246,27 @@ void setupWifi()
 
   influxDBURLParam.setValue(influxDBURL, 40);
   influxDBNameParam.setValue(influxDBName, 32);
+  useWifiParam.setValue(useWifi, 2);
+  useBLEParam.setValue(useBLE, 2);
 
   wm.addParameter(&influxDBURLParam);
   wm.addParameter(&influxDBNameParam);
+  wm.addParameter(&useWifiParam);
+  wm.addParameter(&useBLEParam);
 
   wm.setSaveParamsCallback(saveParams);
   std::vector<const char *> menu = {"wifi", "info", "param", "sep", "restart", "exit"};
   wm.setMenu(menu);
 
   wm.setConnectTimeout(10);
-  wm.setConfigPortalTimeout(45);
+  wm.setConfigPortalTimeout(120);
 
   wm.setClass("invert");
   wm.setHostname(("CO2 Ampel " + to_string(chipId)).c_str());
-
-  isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
+  if (strcmp(useWifi, "1") == 0)
+  {
+    isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
+  }
 }
 
 void toggleShouldStartPortal()
@@ -251,15 +278,17 @@ void setup()
 {
   Serial.begin(115200);
   setChipId();
-  setupSpiffs(); // read params from config.json
+  loadParamsFromSpiffs(); // read params from config.json
 
   setupWifi();
 
   pinMode(START_SETUP_PIN, INPUT_PULLUP);
   attachInterrupt(START_SETUP_PIN, toggleShouldStartPortal, FALLING);
 
-  client.setConnectionParamsV1(influxDBURL, influxDBName);
-
+  if (isWiFiOK)
+  {
+    client.setConnectionParamsV1(influxDBURL, influxDBName);
+  }
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
   myMHZ19.begin(mySerial);
   myMHZ19.setRange(5000);
@@ -283,24 +312,26 @@ void setup()
 
   readCO2();
 
-  BLEDevice::init("CO2 Ampel " + to_string(chipId));
-  BLEServer *pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-  pCharacteristic = pService->createCharacteristic(
-      CHARACTERISTIC_UUID,
-      BLECharacteristic::PROPERTY_READ |
-          BLECharacteristic::PROPERTY_NOTIFY);
+  if (strcmp(useBLE, "1") == 0)
+  {
+    BLEDevice::init("CO2 Ampel " + to_string(chipId));
+    BLEServer *pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new MyServerCallbacks());
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    pCharacteristic = pService->createCharacteristic(
+        CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_READ |
+            BLECharacteristic::PROPERTY_NOTIFY);
+    pCharacteristic->setValue(String(lastCO2).c_str());
+    pService->start();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
 
-  pCharacteristic->setValue(String(lastCO2).c_str());
-  pService->start();
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections issue
-  pAdvertising->setMinPreferred(0x12);
-  BLEDevice::startAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections issue
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+  }
 }
 
 void loop()
@@ -309,16 +340,25 @@ void loop()
   {
     isWiFiOK = WiFi.status() == WL_CONNECTED;
     readCO2();
-    pCharacteristic->setValue(String(lastCO2).c_str());
-    if (deviceConnected)
+    if (strcmp(useBLE, "1") == 0)
     {
-      pCharacteristic->notify();
+      pCharacteristic->setValue(String(lastCO2).c_str());
+      if (deviceConnected)
+      {
+        pCharacteristic->notify();
+      }
     }
   }
   if (shouldShowPortal && !portalRunning)
   {
-    wm.startWebPortal();
-
+    if (WiFi.status() == WL_CONNECTED)
+    {
+      wm.startWebPortal();
+    }
+    else
+    {
+      isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
+    }
     portalRunning = true;
   }
   else if (!shouldShowPortal && portalRunning)
