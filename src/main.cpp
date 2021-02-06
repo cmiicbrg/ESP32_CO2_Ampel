@@ -17,15 +17,19 @@
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 
+//Set to false to prevent leaking secrets in serial console
 #define CO2_WIFI_DEBUG false
 #define CO2_LIGHT_DEBUG false
+#define FORMAT_SPIFFS_ON_FAIL true
 
 /* WiFi */
 #define START_SETUP_PIN 0
 
 bool isWiFiOK = false;
 char influxDBURL[40] = "";
-char influxDBName[32] = "";
+char influxDBOrg[32] = "";
+char influxDBBucket[32] = "";
+char influxDBToken[128] = "";
 char useWifi[2] = "1";
 char useBLE[2] = "1";
 bool shouldShowPortal = false;
@@ -33,7 +37,9 @@ bool portalRunning = false;
 
 WiFiManager wm;
 WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL");
-WiFiManagerParameter influxDBNameParam("influxDBNameID", "Influx DB Name");
+WiFiManagerParameter influxDBOrgParam("influxDBOrgID", "Influx DB Org");
+WiFiManagerParameter influxDBBucketParam("influxDBBucketID", "Influx DB Bucket");
+WiFiManagerParameter influxDBTokenParam("influxDBTokenID", "Influx DB Token");
 WiFiManagerParameter useWifiParam("useWifiID", "Use Wifi 1/0", useWifi, 2);
 WiFiManagerParameter useBLEParam("useBLEID", "Use BLE 1/0", useBLE, 2);
 
@@ -42,6 +48,7 @@ WiFiManagerParameter useBLEParam("useBLEID", "Use BLE 1/0", useBLE, 2);
 #define CHARACTERISTIC_UUID "7ec161e2-396e-11eb-adc1-0242ac120002"
 BLECharacteristic *pCharacteristic;
 bool deviceConnected = false;
+bool shouldUseBluetooth = false;
 
 /* MH Z19B */
 #define RX_PIN 16
@@ -55,6 +62,7 @@ int lastCO2 = 0;
 /* Influx DB */
 InfluxDBClient client;
 Point sensor("Environment");
+bool shouldWriteToInflux = false;
 
 /* BME280 */
 Adafruit_BME280 bme;
@@ -95,7 +103,6 @@ class MyServerCallbacks : public BLEServerCallbacks
 
 void readCO2()
 {
-
   bme.takeForcedMeasurement();
   float temp = bme.readTemperature();
 
@@ -111,7 +118,7 @@ void readCO2()
   getDataTimer = millis();
   lastCO2 = CO2;
 
-  if (isWiFiOK)
+  if (isWiFiOK && shouldWriteToInflux)
   {
     sensor.clearFields();
     sensor.clearTags();
@@ -143,7 +150,7 @@ void loadParamsFromSpiffs()
   //read configuration from FS json
   Serial.println("mounting FS...");
 
-  if (SPIFFS.begin())
+  if (SPIFFS.begin(FORMAT_SPIFFS_ON_FAIL))
   {
     if (SPIFFS.exists("/config.json"))
     {
@@ -163,9 +170,17 @@ void loadParamsFromSpiffs()
         {
           strcpy(influxDBURL, jsonDoc["influxDBURL"]);
         }
-        if (jsonDoc.containsKey("influxDBName"))
+        if (jsonDoc.containsKey("influxDBOrg"))
         {
-          strcpy(influxDBName, jsonDoc["influxDBName"]);
+          strcpy(influxDBOrg, jsonDoc["influxDBOrg"]);
+        }
+        if (jsonDoc.containsKey("influxDBBucket"))
+        {
+          strcpy(influxDBBucket, jsonDoc["influxDBBucket"]);
+        }
+        if (jsonDoc.containsKey("influxDBToken"))
+        {
+          strcpy(influxDBToken, jsonDoc["influxDBToken"]);
         }
         if (jsonDoc.containsKey("useWifi"))
         {
@@ -196,17 +211,24 @@ void saveParams()
 {
 
   Serial.println("Save params");
-  if (influxDBURL != influxDBURLParam.getValue() || influxDBName != influxDBNameParam.getValue())
+  if (influxDBURL != influxDBURLParam.getValue() || influxDBBucket != influxDBBucketParam.getValue())
   {
     strcpy(influxDBURL, influxDBURLParam.getValue());
-    strcpy(influxDBName, influxDBNameParam.getValue());
+    strcpy(influxDBOrg, influxDBOrgParam.getValue());
+    strcpy(influxDBBucket, influxDBBucketParam.getValue());
+    if (strcmp(influxDBTokenParam.getValue(), "") != 0)
+    {
+      strcpy(influxDBToken, influxDBTokenParam.getValue());
+    }
     strcpy(useWifi, useWifiParam.getValue());
     strcpy(useBLE, useBLEParam.getValue());
 
     DynamicJsonDocument jsonDoc(1024);
 
     jsonDoc["influxDBURL"] = influxDBURL;
-    jsonDoc["influxDBName"] = influxDBName;
+    jsonDoc["influxDBOrg"] = influxDBOrg;
+    jsonDoc["influxDBBucket"] = influxDBBucket;
+    jsonDoc["influxDBToken"] = influxDBToken;
     jsonDoc["useWifi"] = useWifi;
     jsonDoc["useBLE"] = useBLE;
 
@@ -219,38 +241,63 @@ void saveParams()
     serializeJson(jsonDoc, configFile);
 
     configFile.close();
-    client.setConnectionParamsV1(influxDBURL, influxDBName);
+    if (CO2_LIGHT_DEBUG)
+    {
+      Serial.println("### INFLUX ###");
+      Serial.print("URL: ");
+      Serial.println(influxDBURL);
+      Serial.print("Org: ");
+      Serial.println(influxDBOrg);
+      Serial.print("Bucket: ");
+      Serial.println(influxDBBucket);
+      Serial.print("Token: ");
+      Serial.println(influxDBToken);
+    }
+
+    client.setConnectionParams(influxDBURL, influxDBOrg, influxDBBucket, influxDBToken);
+    shouldWriteToInflux = client.validateConnection();
   }
 }
 
-void setupWifi()
+void initIfAllBuildFlagsAreSet()
 {
-// Use Buildflags for faster deployment in Schools
-#if defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME)
-  if (strcmp(influxDBName, "") == 0 && strcmp(influxDBName, "") == 0)
+  // Use Buildflags for faster deployment in Schools
+#if defined(INFLUXDB_URL) && defined(INFLUXDB_DB_ORG) && defined(INFLUXDB_DB_BUCKET) && defined(INFLUXDB_DB_TOKEN)
+  if (strcmp(influxDBBucket, "") == 0 && strcmp(influxDBOrg, "") == 0 && strcmp(influxDBBucket, "") == 0 && strcmp(influxDBToken, "") == 0)
   {
     strcpy(influxDBURL, INFLUXDB_URL);
-    strcpy(influxDBName, INFLUXDB_DB_NAME);
+    strcpy(influxDBOrg, INFLUXDB_DB_ORG);
+    strcpy(influxDBBucket, INFLUXDB_DB_BUCKET);
+    strcpy(influxDBToken, INFLUXDB_DB_TOKEN);
   }
 #endif
 
-#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_NAME) // all set start wifi
+#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_ORG) && defined(INFLUXDB_DB_BUCKET) && defined(INFLUXDB_DB_TOKEN) // all set start wifi
   WiFi.mode(WIFI_STA);
   if (WiFi.psk() == "") // Only on first run
   {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
 #endif
+}
 
+void setupWifi()
+{
+  initIfAllBuildFlagsAreSet();
   wm.setDebugOutput(CO2_WIFI_DEBUG);
 
   influxDBURLParam.setValue(influxDBURL, 40);
-  influxDBNameParam.setValue(influxDBName, 32);
+  influxDBOrgParam.setValue(influxDBOrg, 32);
+  influxDBBucketParam.setValue(influxDBBucket, 32);
+  //Don't set token, otherwise it can be read from the web portal
+  influxDBTokenParam.setValue("", 128);
   useWifiParam.setValue(useWifi, 2);
   useBLEParam.setValue(useBLE, 2);
 
   wm.addParameter(&influxDBURLParam);
-  wm.addParameter(&influxDBNameParam);
+  wm.addParameter(&influxDBOrgParam);
+  wm.addParameter(&influxDBBucketParam);
+  wm.addParameter(&influxDBTokenParam);
   wm.addParameter(&useWifiParam);
   wm.addParameter(&useBLEParam);
 
@@ -285,10 +332,26 @@ void setup()
   pinMode(START_SETUP_PIN, INPUT_PULLUP);
   attachInterrupt(START_SETUP_PIN, toggleShouldStartPortal, FALLING);
 
+  //isWiFiOK = WiFi.status() == WL_CONNECTED;
+
   if (isWiFiOK)
   {
-    client.setConnectionParamsV1(influxDBURL, influxDBName);
+    if (CO2_LIGHT_DEBUG)
+    {
+      Serial.println("### INFLUX ###");
+      Serial.print("URL: ");
+      Serial.println(influxDBURL);
+      Serial.print("Org: ");
+      Serial.println(influxDBOrg);
+      Serial.print("Bucket: ");
+      Serial.println(influxDBBucket);
+      Serial.print("Token: ");
+      Serial.println(influxDBToken);
+    }
+    client.setConnectionParams(influxDBURL, influxDBOrg, influxDBBucket, influxDBToken);
+    shouldWriteToInflux = client.validateConnection();
   }
+
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
   myMHZ19.begin(mySerial);
   myMHZ19.setRange(5000);
@@ -312,8 +375,21 @@ void setup()
 
   readCO2();
 
-  if (strcmp(useBLE, "1") == 0)
+  // can't use Bluetooth if InfluxDB uses TLS (memory allocation error,...)
+  shouldUseBluetooth = strcmp(useBLE, "1") == 0 && !(shouldWriteToInflux && strstr(influxDBURL, "https"));
+  if (CO2_LIGHT_DEBUG)
   {
+    Serial.print("Should use Bluetooth: ");
+    Serial.println(useBLE);
+    Serial.print("May use Bluetooth: ");
+    Serial.println(shouldUseBluetooth);
+  }
+  if (shouldUseBluetooth)
+  {
+    if (CO2_LIGHT_DEBUG)
+    {
+      Serial.println("Setting up Bluetooth");
+    }
     BLEDevice::init("CO2 Ampel " + to_string(chipId));
     BLEServer *pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
@@ -340,7 +416,7 @@ void loop()
   {
     isWiFiOK = WiFi.status() == WL_CONNECTED;
     readCO2();
-    if (strcmp(useBLE, "1") == 0)
+    if (shouldUseBluetooth)
     {
       pCharacteristic->setValue(String(lastCO2).c_str());
       if (deviceConnected)
