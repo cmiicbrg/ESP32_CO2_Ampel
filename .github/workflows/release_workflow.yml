@@ -21,7 +21,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install platformio
     - name: Run PlatformIO build on selected platforms
-      run: platformio run -e esp32dev
+      run: platformio run -e esp32doit-devkit-v1
 
     - name: Code static analysis
       run: platformio check
@@ -30,7 +30,7 @@ jobs:
       uses: svenstaro/upload-release-action@v1-release
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: .pio/build/esp32dev/firmware.bin
+        file: .pio/build/esp32doit-devkit-v1/firmware.bin
         asset_name: firmware.bin
         tag: ${{ github.ref }}
         overwrite: true
