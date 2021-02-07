@@ -18,8 +18,8 @@
 #include <Adafruit_BME280.h>
 
 //Set to false to prevent leaking secrets in serial console
-#define CO2_WIFI_DEBUG false
-#define CO2_LIGHT_DEBUG false
+#define CO2_WIFI_DEBUG true
+#define CO2_LIGHT_DEBUG true
 #define FORMAT_SPIFFS_ON_FAIL true
 
 /* WiFi */
@@ -30,8 +30,8 @@ char influxDBURL[40] = "";
 char influxDBOrg[32] = "";
 char influxDBBucket[32] = "";
 char influxDBToken[128] = "";
-char useWifi[2] = "1";
-char useBLE[2] = "1";
+char useWifi[2] = "0";
+char useBLE[2] = "0";
 bool shouldShowPortal = false;
 bool portalRunning = false;
 
@@ -108,6 +108,8 @@ void readCO2()
 
   float CO2;
   CO2 = myMHZ19.getCO2(); // Request CO2 (as ppm)
+  Serial.print("Temp: ");
+  Serial.println(temp);
 
   showCO2(CO2);
   showTemp(temp);
@@ -124,6 +126,9 @@ void readCO2()
     sensor.clearTags();
 
     sensor.addTag("device", deviceName + chipId);
+    sensor.addTag("SSID", WiFi.SSID());
+
+    sensor.addField("rssi", WiFi.RSSI());
     sensor.addField("ppm", CO2);
     if (bmeOK)
     {
@@ -140,6 +145,10 @@ void initFastLED()
   defineColors();
   FastLED.addLeds<CHIPSET, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.clear();
+  if (CO2_LIGHT_DEBUG)
+  {
+    Serial.println("cleared Fastled, setting 2 and 4 to green");
+  }
   setPixel(2, green[0]);
   setPixel(4, green[0]);
   FastLED.show();
@@ -354,6 +363,9 @@ void setup()
 
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
   myMHZ19.begin(mySerial);
+  // if (myMHZ19.errorCode != RESULT_OK) {
+
+  // }
   myMHZ19.setRange(5000);
 
   initFastLED();
