@@ -30,7 +30,7 @@ char influxDBURL[40] = "";
 char influxDBOrg[32] = "";
 char influxDBBucket[32] = "";
 char influxDBToken[128] = "";
-char useWifi[2] = "0";
+char useWifi[2] = "1";
 char useBLE[2] = "0";
 bool shouldShowPortal = false;
 bool portalRunning = false;
@@ -58,6 +58,7 @@ MHZ19 myMHZ19;
 HardwareSerial mySerial(2);
 unsigned long getDataTimer = 0;
 int lastCO2 = 0;
+bool MHZ19OK = false;
 
 /* Influx DB */
 InfluxDBClient client;
@@ -66,26 +67,23 @@ bool shouldWriteToInflux = false;
 
 /* BME280 */
 Adafruit_BME280 bme;
-bool bmeOK = true;
+bool bmeOK = false;
 
 /* miscellaneous */
-uint32_t chipId = 0;
-std::string to_string(const uint32_t n)
-{
-  std::ostringstream stm;
-  stm << n;
-  return stm.str();
-}
+String chipId = "";
 
-std::string shortName = "ESP_";
 String deviceName = "CO2 Ampel ";
+
+unsigned long getBlinkTimer = 0;
 
 void setChipId()
 {
+  uint32_t lchipId = 0;
   for (int i = 0; i < 17; i = i + 8)
   {
-    chipId |= ((ESP.getEfuseMac() >> (40 - i)) & 0xff) << i;
+    lchipId |= ((ESP.getEfuseMac() >> (40 - i)) & 0xff) << i;
   }
+  chipId = String(lchipId);
 }
 
 class MyServerCallbacks : public BLEServerCallbacks
@@ -103,40 +101,46 @@ class MyServerCallbacks : public BLEServerCallbacks
 
 void readCO2()
 {
-  bme.takeForcedMeasurement();
-  float temp = bme.readTemperature();
-
-  float CO2;
-  CO2 = myMHZ19.getCO2(); // Request CO2 (as ppm)
-  Serial.print("Temp: ");
-  Serial.println(temp);
-
-  showCO2(CO2);
-  showTemp(temp);
-  FastLED.show();
-
-  Serial.print("CO2 (ppm): ");
-  Serial.println(CO2);
-  getDataTimer = millis();
-  lastCO2 = CO2;
-
-  if (isWiFiOK && shouldWriteToInflux)
+  if (MHZ19OK)
   {
-    sensor.clearFields();
-    sensor.clearTags();
+    bme.takeForcedMeasurement();
+    float temp = bme.readTemperature();
 
-    sensor.addTag("device", deviceName + chipId);
-    sensor.addTag("SSID", WiFi.SSID());
+    float CO2;
+    CO2 = myMHZ19.getCO2(); // Request CO2 (as ppm)
+    Serial.print("Temp: ");
+    Serial.println(temp);
 
-    sensor.addField("rssi", WiFi.RSSI());
-    sensor.addField("ppm", CO2);
+    showCO2(CO2);
     if (bmeOK)
     {
-      sensor.addField("temp", temp);
-      sensor.addField("humidity", bme.readHumidity());
-      sensor.addField("pressure", bme.readPressure());
+      showTemp(temp);
     }
-    client.writePoint(sensor);
+    FastLED.show();
+
+    Serial.print("CO2 (ppm): ");
+    Serial.println(CO2);
+
+    lastCO2 = CO2;
+
+    if (isWiFiOK && shouldWriteToInflux)
+    {
+      sensor.clearFields();
+      sensor.clearTags();
+
+      sensor.addTag("device", deviceName + chipId);
+      sensor.addTag("SSID", WiFi.SSID());
+
+      sensor.addField("rssi", WiFi.RSSI());
+      sensor.addField("ppm", CO2);
+      if (bmeOK)
+      {
+        sensor.addField("temp", temp);
+        sensor.addField("humidity", bme.readHumidity());
+        sensor.addField("pressure", bme.readPressure());
+      }
+      client.writePoint(sensor);
+    }
   }
 }
 
@@ -318,10 +322,10 @@ void setupWifi()
   wm.setConfigPortalTimeout(120);
 
   wm.setClass("invert");
-  wm.setHostname(("CO2 Ampel " + to_string(chipId)).c_str());
+  wm.setHostname((deviceName + chipId).c_str());
   if (strcmp(useWifi, "1") == 0)
   {
-    isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
+    isWiFiOK = wm.autoConnect((deviceName + chipId).c_str(), ("pass" + chipId).c_str());
   }
 }
 
@@ -340,8 +344,6 @@ void setup()
 
   pinMode(START_SETUP_PIN, INPUT_PULLUP);
   attachInterrupt(START_SETUP_PIN, toggleShouldStartPortal, FALLING);
-
-  //isWiFiOK = WiFi.status() == WL_CONNECTED;
 
   if (isWiFiOK)
   {
@@ -363,9 +365,7 @@ void setup()
 
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
   myMHZ19.begin(mySerial);
-  // if (myMHZ19.errorCode != RESULT_OK) {
-
-  // }
+  MHZ19OK = myMHZ19.errorCode == RESULT_OK;
   myMHZ19.setRange(5000);
 
   initFastLED();
@@ -402,7 +402,7 @@ void setup()
     {
       Serial.println("Setting up Bluetooth");
     }
-    BLEDevice::init("CO2 Ampel " + to_string(chipId));
+    BLEDevice::init((deviceName + chipId).c_str());
     BLEServer *pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
     BLEService *pService = pServer->createService(SERVICE_UUID);
@@ -436,6 +436,35 @@ void loop()
         pCharacteristic->notify();
       }
     }
+    getDataTimer = millis();
+  }
+  if (millis() - getBlinkTimer > 1000)
+  {
+    MHZ19OK = myMHZ19.errorCode == RESULT_OK;
+    if (!MHZ19OK)
+    {
+      if (leds[4] == green[0])
+      {
+        setPixel(4, red[0]);
+      }
+      else
+      {
+        setPixel(4, green[0]);
+      }
+    }
+    if (!bmeOK)
+    {
+      if (leds[2] == green[0])
+      {
+        setPixel(2, red[0]);
+      }
+      else
+      {
+        setPixel(2, green[0]);
+      }
+    }
+    FastLED.show();
+    getBlinkTimer = millis();
   }
   if (shouldShowPortal && !portalRunning)
   {
@@ -445,7 +474,7 @@ void loop()
     }
     else
     {
-      isWiFiOK = wm.autoConnect(("CO2 Ampel " + to_string(chipId)).c_str(), ("pass" + to_string(chipId)).c_str());
+      isWiFiOK = wm.autoConnect((deviceName + chipId).c_str(), ("pass" + chipId).c_str());
     }
     portalRunning = true;
   }

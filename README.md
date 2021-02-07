@@ -5,7 +5,7 @@
 * ESP32 Development Board
 * MH-Z19B or MH-Z19C (400-5000ppm) Infrared CO<sub>2</sub> Module (needs calibration!!!)
 * BME280 3.3V Temperature Humidity Barometric Pressure Sensor Module
-* WS2811 Full Color LED Pixel Lights
+* WS2811 Full Color LED Pixel Lights 5V (usually logic level is 5 V but work with ESP32 3.3 V, see [notes](docs/WS2811LEDStrings.md)
 * Fully 3D-Printed Case
 
 You should be able to do a build for around USD 22,00
