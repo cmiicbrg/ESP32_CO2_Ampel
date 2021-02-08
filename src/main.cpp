@@ -577,8 +577,8 @@ void setup()
   myMHZ19.begin(mySerial);
   MHZ19OK = myMHZ19.errorCode == RESULT_OK;
   myMHZ19.setRange(5000);
-  // myMHZ19.autoCalibration(false);
-  // myMHZ19.calibrate();
+  myMHZ19.autoCalibration(false);
+
   initFastLED();
 
   if (!bme.begin(0x76, &Wire))
