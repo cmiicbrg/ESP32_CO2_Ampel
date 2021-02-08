@@ -393,9 +393,6 @@ void storeParamsInJSON()
 {
   DynamicJsonDocument jsonDoc(1024);
 
-  Serial.print("Latest URL (Store): ");
-  Serial.println(lastestVersionURL);
-
   jsonDoc["influxDBURL"] = influxDBURL;
   jsonDoc["influxDBOrg"] = influxDBOrg;
   jsonDoc["influxDBBucket"] = influxDBBucket;
@@ -636,7 +633,7 @@ void loop()
     }
     getDataTimer = millis();
   }
-  if (millis() - getBlinkTimer > 1000)
+  if (millis() - getBlinkTimer > 500)
   {
     MHZ19OK = myMHZ19.errorCode == RESULT_OK;
     if (!MHZ19OK)
