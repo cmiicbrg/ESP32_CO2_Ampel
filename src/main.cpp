@@ -8,6 +8,9 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 
+#include <Update.h>
+#include "Version.h"
+
 #include "MHZ19.h"
 #include <InfluxDbClient.h>
 #include "FastLED.h"
@@ -18,8 +21,8 @@
 #include <Adafruit_BME280.h>
 
 //Set to false to prevent leaking secrets in serial console
-#define CO2_WIFI_DEBUG true
-#define CO2_LIGHT_DEBUG true
+#define CO2_WIFI_DEBUG false
+#define CO2_LIGHT_DEBUG false
 #define FORMAT_SPIFFS_ON_FAIL true
 
 /* WiFi */
@@ -76,6 +79,9 @@ String deviceName = "CO2 Ampel ";
 
 unsigned long getBlinkTimer = 0;
 
+String newVersion = "";
+unsigned long lastUpdateTimer = 0;
+
 void setChipId()
 {
   uint32_t lchipId = 0;
@@ -98,6 +104,156 @@ class MyServerCallbacks : public BLEServerCallbacks
     deviceConnected = false;
   }
 };
+
+void checkUpdate()
+{
+  if (WiFi.isConnected())
+  {
+    WiFiClientSecure *client = new WiFiClientSecure;
+    if (client)
+    {
+      {
+        // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
+        HTTPClient https;
+
+        Serial.print("[HTTPS] begin...\n");
+        if (https.begin(*client, LATEST_VERSION_URL))
+        { // HTTPS
+          Serial.print("[HTTPS] GET...\n");
+          // start connection and send HTTP header
+          int httpCode = https.GET();
+
+          // httpCode will be negative on error
+          if (httpCode > 0)
+          {
+            // HTTP header has been send and Server response header has been handled
+            Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
+
+            // file found at server
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
+            {
+              std::string nV;
+              newVersion = https.getStream().readStringUntil('\n');
+              Serial.println(newVersion);
+            }
+          }
+          else
+          {
+            Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+          }
+
+          https.end();
+        }
+        else
+        {
+          Serial.printf("[HTTPS] Unable to connect\n");
+        }
+
+        // End extra scoping block
+      }
+      delete client;
+    }
+    else
+    {
+      Serial.println("Unable to create client");
+    }
+  }
+}
+void processOTAUpdate()
+{
+  if (WiFi.isConnected())
+  {
+    WiFiClientSecure *client = new WiFiClientSecure;
+    if (client)
+    {
+      {
+        // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
+        HTTPClient https;
+
+        Serial.print("[HTTPS] begin...\n");
+        if (https.begin(*client, FIRMWARE_PATH))
+        { // HTTPS
+          Serial.print("[HTTPS] GET...\n");
+          // start connection and send HTTP header
+          int httpCode = https.GET();
+
+          // httpCode will be negative on error
+          if (httpCode > 0)
+          {
+            // HTTP header has been send and Server response header has been handled
+            Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
+            if (httpCode == HTTP_CODE_FOUND)
+            {
+              Serial.println("https.hasHeader(\"location\")???");
+              Serial.println(https.hasHeader("location"));
+            }
+            // file found at server
+            if (httpCode == HTTP_CODE_OK) // || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
+            {
+              int contentLength = https.getSize();
+              Serial.println(contentLength);
+              if (contentLength <= 0)
+              {
+                Serial.println("Content-Length not defined");
+                return;
+              }
+              bool canBegin = Update.begin(contentLength);
+              if (!canBegin)
+              {
+                Serial.println("Not enough space to begin OTA");
+                return;
+              }
+              Serial.println("Will begin OTA Update");
+              Client &client = https.getStream();
+              int written = Update.writeStream(client);
+              if (written != contentLength)
+              {
+                Serial.println(String("OTA written ") + written + " / " + contentLength + " bytes");
+                return;
+              }
+
+              if (!Update.end())
+              {
+                Serial.println("Error #" + String(Update.getError()));
+                return;
+              }
+
+              if (!Update.isFinished())
+              {
+                Serial.println("Update failed.");
+                return;
+              }
+
+              Serial.println("Update successfully completed. Rebooting.");
+              ESP.restart();
+            }
+            else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY)
+            {
+              Serial.println("Moved Permanently");
+            }
+          }
+          else
+          {
+            Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+          }
+
+          https.end();
+        }
+        else
+        {
+          Serial.printf("[HTTPS] Unable to connect\n");
+        }
+
+        // End extra scoping block
+      }
+      delete client;
+    }
+    else
+    {
+      Serial.println("Unable to create client");
+    }
+  }
+}
 
 void readCO2()
 {
@@ -220,6 +376,28 @@ void loadParamsFromSpiffs()
   }
 }
 
+void storeParamsInJSON()
+{
+  DynamicJsonDocument jsonDoc(1024);
+
+  jsonDoc["influxDBURL"] = influxDBURL;
+  jsonDoc["influxDBOrg"] = influxDBOrg;
+  jsonDoc["influxDBBucket"] = influxDBBucket;
+  jsonDoc["influxDBToken"] = influxDBToken;
+  jsonDoc["useWifi"] = useWifi;
+  jsonDoc["useBLE"] = useBLE;
+
+  File configFile = SPIFFS.open("/config.json", "w");
+  if (!configFile)
+  {
+    Serial.println("failed to open config file for writing");
+  }
+
+  serializeJson(jsonDoc, configFile);
+
+  configFile.close();
+}
+
 void saveParams()
 {
 
@@ -236,24 +414,8 @@ void saveParams()
     strcpy(useWifi, useWifiParam.getValue());
     strcpy(useBLE, useBLEParam.getValue());
 
-    DynamicJsonDocument jsonDoc(1024);
+    storeParamsInJSON();
 
-    jsonDoc["influxDBURL"] = influxDBURL;
-    jsonDoc["influxDBOrg"] = influxDBOrg;
-    jsonDoc["influxDBBucket"] = influxDBBucket;
-    jsonDoc["influxDBToken"] = influxDBToken;
-    jsonDoc["useWifi"] = useWifi;
-    jsonDoc["useBLE"] = useBLE;
-
-    File configFile = SPIFFS.open("/config.json", "w");
-    if (!configFile)
-    {
-      Serial.println("failed to open config file for writing");
-    }
-
-    serializeJson(jsonDoc, configFile);
-
-    configFile.close();
     if (CO2_LIGHT_DEBUG)
     {
       Serial.println("### INFLUX ###");
@@ -282,6 +444,7 @@ void initIfAllBuildFlagsAreSet()
     strcpy(influxDBOrg, INFLUXDB_DB_ORG);
     strcpy(influxDBBucket, INFLUXDB_DB_BUCKET);
     strcpy(influxDBToken, INFLUXDB_DB_TOKEN);
+    storeParamsInJSON();
   }
 #endif
 
@@ -486,5 +649,18 @@ void loop()
   if (portalRunning)
   {
     wm.process();
+  }
+  if (isWiFiOK && ((millis() > 45000 && millis() < 60000) || millis() - lastUpdateTimer > 3600000)) //43200000))
+  {
+    checkUpdate();
+    // strcpy(newVersion, "v0.3.1");
+    Serial.print("checking for update. Elapsed time: ");
+    Serial.print((millis() - lastUpdateTimer) / 1000);
+    Serial.println("s");
+    if (Version(VERSION) < Version(newVersion.c_str()))
+    {
+      processOTAUpdate();
+    }
+    lastUpdateTimer = millis();
   }
 }
