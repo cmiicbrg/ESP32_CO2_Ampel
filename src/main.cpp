@@ -33,6 +33,8 @@ char influxDBURL[40] = "";
 char influxDBOrg[32] = "";
 char influxDBBucket[32] = "";
 char influxDBToken[128] = "";
+char lastestVersionURL[60] = "";
+char firmwarePath[60] = "";
 char useWifi[2] = "1";
 char useBLE[2] = "0";
 bool shouldShowPortal = false;
@@ -43,6 +45,8 @@ WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL");
 WiFiManagerParameter influxDBOrgParam("influxDBOrgID", "Influx DB Org");
 WiFiManagerParameter influxDBBucketParam("influxDBBucketID", "Influx DB Bucket");
 WiFiManagerParameter influxDBTokenParam("influxDBTokenID", "Influx DB Token");
+WiFiManagerParameter lastestVersionURLParam("lastestVersionURLID", "URL with string of last version number");
+WiFiManagerParameter firmwarePathParam("firmwarePathID", "Urlpath of firmware.bin");
 WiFiManagerParameter useWifiParam("useWifiID", "Use Wifi 1/0", useWifi, 2);
 WiFiManagerParameter useBLEParam("useBLEID", "Use BLE 1/0", useBLE, 2);
 
@@ -81,6 +85,7 @@ unsigned long getBlinkTimer = 0;
 
 String newVersion = "";
 unsigned long lastUpdateTimer = 0;
+unsigned int checkCount = 0;
 
 void setChipId()
 {
@@ -117,7 +122,7 @@ void checkUpdate()
         HTTPClient https;
 
         Serial.print("[HTTPS] begin...\n");
-        if (https.begin(*client, LATEST_VERSION_URL))
+        if (https.begin(*client, lastestVersionURL))
         { // HTTPS
           Serial.print("[HTTPS] GET...\n");
           // start connection and send HTTP header
@@ -171,7 +176,7 @@ void processOTAUpdate()
         HTTPClient https;
 
         Serial.print("[HTTPS] begin...\n");
-        if (https.begin(*client, FIRMWARE_PATH))
+        if (https.begin(*client, firmwarePath))
         { // HTTPS
           Serial.print("[HTTPS] GET...\n");
           // start connection and send HTTP header
@@ -351,6 +356,14 @@ void loadParamsFromSpiffs()
         {
           strcpy(influxDBToken, jsonDoc["influxDBToken"]);
         }
+        if (jsonDoc.containsKey("lastestVersionURL"))
+        {
+          strcpy(lastestVersionURL, jsonDoc["lastestVersionURL"]);
+        }
+        if (jsonDoc.containsKey("firmwarePath"))
+        {
+          strcpy(firmwarePath, jsonDoc["firmwarePath"]);
+        }
         if (jsonDoc.containsKey("useWifi"))
         {
           strcpy(useWifi, jsonDoc["useWifi"]);
@@ -380,10 +393,15 @@ void storeParamsInJSON()
 {
   DynamicJsonDocument jsonDoc(1024);
 
+  Serial.print("Latest URL (Store): ");
+  Serial.println(lastestVersionURL);
+
   jsonDoc["influxDBURL"] = influxDBURL;
   jsonDoc["influxDBOrg"] = influxDBOrg;
   jsonDoc["influxDBBucket"] = influxDBBucket;
   jsonDoc["influxDBToken"] = influxDBToken;
+  jsonDoc["lastestVersionURL"] = lastestVersionURL;
+  jsonDoc["firmwarePath"] = firmwarePath;
   jsonDoc["useWifi"] = useWifi;
   jsonDoc["useBLE"] = useBLE;
 
@@ -411,6 +429,9 @@ void saveParams()
     {
       strcpy(influxDBToken, influxDBTokenParam.getValue());
     }
+    strcpy(lastestVersionURL, lastestVersionURLParam.getValue());
+    strcpy(firmwarePath, firmwarePathParam.getValue());
+
     strcpy(useWifi, useWifiParam.getValue());
     strcpy(useBLE, useBLEParam.getValue());
 
@@ -427,6 +448,10 @@ void saveParams()
       Serial.println(influxDBBucket);
       Serial.print("Token: ");
       Serial.println(influxDBToken);
+      Serial.print("Latest URL: ");
+      Serial.println(lastestVersionURL);
+      Serial.print("Firmware Path: ");
+      Serial.println(firmwarePath);
     }
 
     client.setConnectionParams(influxDBURL, influxDBOrg, influxDBBucket, influxDBToken);
@@ -437,18 +462,20 @@ void saveParams()
 void initIfAllBuildFlagsAreSet()
 {
   // Use Buildflags for faster deployment in Schools
-#if defined(INFLUXDB_URL) && defined(INFLUXDB_DB_ORG) && defined(INFLUXDB_DB_BUCKET) && defined(INFLUXDB_DB_TOKEN)
+#if defined(INFLUXDB_URL) && defined(INFLUXDB_DB_ORG) && defined(INFLUXDB_DB_BUCKET) && defined(INFLUXDB_DB_TOKEN) && defined(LATEST_VERSION_URL) && defined(FIRMWARE_PATH)
   if (strcmp(influxDBBucket, "") == 0 && strcmp(influxDBOrg, "") == 0 && strcmp(influxDBBucket, "") == 0 && strcmp(influxDBToken, "") == 0)
   {
     strcpy(influxDBURL, INFLUXDB_URL);
     strcpy(influxDBOrg, INFLUXDB_DB_ORG);
     strcpy(influxDBBucket, INFLUXDB_DB_BUCKET);
     strcpy(influxDBToken, INFLUXDB_DB_TOKEN);
+    strcpy(lastestVersionURL, LATEST_VERSION_URL);
+    strcpy(firmwarePath, FIRMWARE_PATH);
     storeParamsInJSON();
   }
 #endif
 
-#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_ORG) && defined(INFLUXDB_DB_BUCKET) && defined(INFLUXDB_DB_TOKEN) // all set start wifi
+#if defined(WIFI_SSID) && defined(WIFI_PASS) && defined(INFLUXDB_URL) && defined(INFLUXDB_DB_ORG) && defined(INFLUXDB_DB_BUCKET) && defined(INFLUXDB_DB_TOKEN) && defined(LATEST_VERSION_URL) && defined(FIRMWARE_PATH) // all set start wifi
   WiFi.mode(WIFI_STA);
   if (WiFi.psk() == "") // Only on first run
   {
@@ -467,6 +494,8 @@ void setupWifi()
   influxDBBucketParam.setValue(influxDBBucket, 32);
   //Don't set token, otherwise it can be read from the web portal
   influxDBTokenParam.setValue("", 128);
+  lastestVersionURLParam.setValue(lastestVersionURL, 32);
+  firmwarePathParam.setValue(firmwarePath, 32);
   useWifiParam.setValue(useWifi, 2);
   useBLEParam.setValue(useBLE, 2);
 
@@ -474,6 +503,8 @@ void setupWifi()
   wm.addParameter(&influxDBOrgParam);
   wm.addParameter(&influxDBBucketParam);
   wm.addParameter(&influxDBTokenParam);
+  wm.addParameter(&lastestVersionURLParam);
+  wm.addParameter(&firmwarePathParam);
   wm.addParameter(&useWifiParam);
   wm.addParameter(&useBLEParam);
 
@@ -521,6 +552,10 @@ void setup()
       Serial.println(influxDBBucket);
       Serial.print("Token: ");
       Serial.println(influxDBToken);
+      Serial.print("Latest URL: ");
+      Serial.println(lastestVersionURL);
+      Serial.print("Firmware Path: ");
+      Serial.println(firmwarePath);
     }
     client.setConnectionParams(influxDBURL, influxDBOrg, influxDBBucket, influxDBToken);
     shouldWriteToInflux = client.validateConnection();
@@ -650,17 +685,15 @@ void loop()
   {
     wm.process();
   }
-  if (isWiFiOK && ((millis() > 45000 && millis() < 60000) || millis() - lastUpdateTimer > 3600000)) //43200000))
+  if (isWiFiOK && ((millis() > 45000 && checkCount == 0) || millis() - lastUpdateTimer > 3600000)) //43200000))
   {
     checkUpdate();
-    // strcpy(newVersion, "v0.3.1");
-    Serial.print("checking for update. Elapsed time: ");
-    Serial.print((millis() - lastUpdateTimer) / 1000);
-    Serial.println("s");
+
     if (Version(VERSION) < Version(newVersion.c_str()))
     {
       processOTAUpdate();
     }
+    checkCount++;
     lastUpdateTimer = millis();
   }
 }
