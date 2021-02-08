@@ -87,6 +87,8 @@ String newVersion = "";
 unsigned long lastUpdateTimer = 0;
 unsigned int checkCount = 0;
 
+unsigned long timeWithReadingAbove400 = 0;
+
 void setChipId()
 {
   uint32_t lchipId = 0;
@@ -269,38 +271,51 @@ void readCO2()
 
     float CO2;
     CO2 = myMHZ19.getCO2(); // Request CO2 (as ppm)
-    Serial.print("Temp: ");
-    Serial.println(temp);
-
-    showCO2(CO2);
-    if (bmeOK)
+    if (CO2 > 0.0f) // reading is sometimes zero -> don't publish zero values
     {
-      showTemp(temp);
-    }
-    FastLED.show();
-
-    Serial.print("CO2 (ppm): ");
-    Serial.println(CO2);
-
-    lastCO2 = CO2;
-
-    if (isWiFiOK && shouldWriteToInflux)
-    {
-      sensor.clearFields();
-      sensor.clearTags();
-
-      sensor.addTag("device", deviceName + chipId);
-      sensor.addTag("SSID", WiFi.SSID());
-
-      sensor.addField("rssi", WiFi.RSSI());
-      sensor.addField("ppm", CO2);
+      showCO2(CO2);
       if (bmeOK)
       {
-        sensor.addField("temp", temp);
-        sensor.addField("humidity", bme.readHumidity());
-        sensor.addField("pressure", bme.readPressure());
+        showTemp(temp);
       }
-      client.writePoint(sensor);
+      FastLED.show();
+
+      Serial.print("CO2 (ppm): ");
+      Serial.println(CO2);
+      Serial.print("Temp: ");
+      Serial.println(temp);
+
+      if (CO2 > 400.0f)
+      {
+        timeWithReadingAbove400 = millis();
+      }
+      if (millis() - timeWithReadingAbove400 > 1200000)
+      {
+        //All readings in the last 20 Minutes have been below 400 -> calibrate
+        Serial.println("Calibrating ..");
+        myMHZ19.calibrate();
+      }
+
+      lastCO2 = CO2;
+
+      if (isWiFiOK && shouldWriteToInflux)
+      {
+        sensor.clearFields();
+        sensor.clearTags();
+
+        sensor.addTag("device", deviceName + chipId);
+        sensor.addTag("SSID", WiFi.SSID());
+
+        sensor.addField("rssi", WiFi.RSSI());
+        sensor.addField("ppm", CO2);
+        if (bmeOK)
+        {
+          sensor.addField("temp", temp);
+          sensor.addField("humidity", bme.readHumidity());
+          sensor.addField("pressure", bme.readPressure());
+        }
+        client.writePoint(sensor);
+      }
     }
   }
 }
@@ -562,7 +577,8 @@ void setup()
   myMHZ19.begin(mySerial);
   MHZ19OK = myMHZ19.errorCode == RESULT_OK;
   myMHZ19.setRange(5000);
-
+  // myMHZ19.autoCalibration(false);
+  // myMHZ19.calibrate();
   initFastLED();
 
   if (!bme.begin(0x76, &Wire))
