@@ -74,9 +74,9 @@ bool shouldWriteToInflux = false;
 
 /* BME280 */
 // Temperature compensation for the setup 
-#define TEMP_COMPENSATION -2.5
+#define TEMP_COMPENSATION -2.5f
 // Altitude of the location
-#define ALTITUDE 250.0
+#define ALTITUDE 266.0f
 Adafruit_BME280 bme;
 bool bmeOK = false;
 
