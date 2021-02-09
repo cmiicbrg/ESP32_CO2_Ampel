@@ -73,8 +73,13 @@ Point sensor("Environment");
 bool shouldWriteToInflux = false;
 
 /* BME280 */
+// Temperature compensation for the setup 
+#define TEMP_COMPENSATION -2.5
+// Altitude of the location
+#define ALTITUDE 250.0
 Adafruit_BME280 bme;
 bool bmeOK = false;
+
 
 /* miscellaneous */
 String chipId = "";
@@ -122,7 +127,7 @@ void checkUpdate()
       {
         // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
         HTTPClient https;
-
+        https.setUserAgent(deviceName + chipId + " " + VERSION);
         Serial.print("[HTTPS] begin...\n");
         if (https.begin(*client, lastestVersionURL))
         { // HTTPS
@@ -176,7 +181,7 @@ void processOTAUpdate()
       {
         // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
         HTTPClient https;
-
+        https.setUserAgent(deviceName + chipId + " " + VERSION);
         Serial.print("[HTTPS] begin...\n");
         if (https.begin(*client, firmwarePath))
         { // HTTPS
@@ -268,10 +273,11 @@ void readCO2()
   {
     bme.takeForcedMeasurement();
     float temp = bme.readTemperature();
+    float tempCompensation = bme.getTemperatureCompensation();
 
     float CO2;
     CO2 = myMHZ19.getCO2(); // Request CO2 (as ppm)
-    if (CO2 > 0.0f) // reading is sometimes zero -> don't publish zero values
+    if (CO2 > 0.0f)         // reading is sometimes zero -> don't publish zero values
     {
       showCO2(CO2);
       if (bmeOK)
@@ -310,9 +316,12 @@ void readCO2()
         sensor.addField("ppm", CO2);
         if (bmeOK)
         {
+          float pressure =  bme.readPressure();
+          sensor.addField("seaLevelPressure", bme.seaLevelForAltitude(ALTITUDE, pressure));
           sensor.addField("temp", temp);
+          sensor.addField("tempCompensation", tempCompensation);
           sensor.addField("humidity", bme.readHumidity());
-          sensor.addField("pressure", bme.readPressure());
+          sensor.addField("pressure", pressure);
         }
         client.writePoint(sensor);
       }
@@ -578,7 +587,7 @@ void setup()
   MHZ19OK = myMHZ19.errorCode == RESULT_OK;
   myMHZ19.setRange(5000);
   myMHZ19.autoCalibration(false);
-
+  
   initFastLED();
 
   if (!bme.begin(0x76, &Wire))
@@ -594,6 +603,9 @@ void setup()
                     Adafruit_BME280::SAMPLING_X1, // pressure
                     Adafruit_BME280::SAMPLING_X1, // humidity
                     Adafruit_BME280::FILTER_OFF);
+    
+    bme.setTemperatureCompensation(TEMP_COMPENSATION) ;
+    
   }
 
   readCO2();
