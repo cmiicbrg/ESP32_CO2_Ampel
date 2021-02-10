@@ -61,6 +61,7 @@ bool shouldUseBluetooth = false;
 #define RX_PIN 16
 #define TX_PIN 17
 #define BAUDRATE 9600 // Native to the sensor (do not change)
+#define MEASUREMENT_INTERVAL 10000
 MHZ19 myMHZ19;
 HardwareSerial mySerial(2);
 unsigned long getDataTimer = 0;
@@ -74,9 +75,9 @@ bool shouldWriteToInflux = false;
 
 /* BME280 */
 // Temperature compensation for the setup 
-#define TEMP_COMPENSATION -2.5f
+#define TEMP_COMPENSATION -3.0f
 // Altitude of the location
-#define ALTITUDE 266.0f
+#define ALTITUDE 277.0f
 Adafruit_BME280 bme;
 bool bmeOK = false;
 
@@ -271,7 +272,7 @@ void readCO2()
 {
   if (MHZ19OK)
   {
-    bme.takeForcedMeasurement();
+    //bme.takeForcedMeasurement();
     float temp = bme.readTemperature();
     float tempCompensation = bme.getTemperatureCompensation();
 
@@ -598,7 +599,7 @@ void setup()
   else
   {
     bmeOK = true;
-    bme.setSampling(Adafruit_BME280::MODE_FORCED,
+    bme.setSampling(Adafruit_BME280::MODE_NORMAL,
                     Adafruit_BME280::SAMPLING_X1, // temperature
                     Adafruit_BME280::SAMPLING_X1, // pressure
                     Adafruit_BME280::SAMPLING_X1, // humidity
@@ -647,7 +648,7 @@ void setup()
 
 void loop()
 {
-  if (millis() - getDataTimer > 30000)
+  if (millis() - getDataTimer > MEASUREMENT_INTERVAL)
   {
     isWiFiOK = WiFi.status() == WL_CONNECTED;
     readCO2();
