@@ -133,16 +133,23 @@ void showCO2(float ppm)
 
 void showTemp(float temp)
 {
-    if (temp < 18.0)
+    if (temp < 17.0)
     {
         leds[0] = blue[2];
         leds[1] = cyan[2];
         leds[2] = green[0];
         leds[3] = off;
     }
-    else if (temp < 19.0)
+    else if (temp < 18.0)
     {
         leds[0] = blue[0];
+        leds[1] = cyan[2];
+        leds[2] = green[0];
+        leds[3] = off;
+    }
+    else if (temp < 19.0)
+    {
+        leds[0] = off;
         leds[1] = cyan[2];
         leds[2] = green[0];
         leds[3] = off;
@@ -150,18 +157,11 @@ void showTemp(float temp)
     else if (temp < 20.0)
     {
         leds[0] = off;
-        leds[1] = cyan[2];
-        leds[2] = green[0];
-        leds[3] = off;
-    }
-    else if (temp < 21.0)
-    {
-        leds[0] = off;
         leds[1] = cyan[1];
         leds[2] = green[0];
         leds[3] = off;
     }
-    else if (temp < 22.0)
+    else if (temp < 21.0)
     {
         leds[0] = off;
         leds[1] = cyan[0];
