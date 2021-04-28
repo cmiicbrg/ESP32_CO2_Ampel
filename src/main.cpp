@@ -67,6 +67,8 @@ HardwareSerial mySerial(2);
 unsigned long getDataTimer = 0;
 int lastCO2 = 0;
 bool MHZ19OK = false;
+unsigned long lastSuccessfulWriteTimer = 0;
+unsigned long readCount = 0;
 
 /* Influx DB */
 InfluxDBClient client;
@@ -74,13 +76,12 @@ Point sensor("Environment");
 bool shouldWriteToInflux = false;
 
 /* BME280 */
-// Temperature compensation for the setup 
+// Temperature compensation for the setup
 #define TEMP_COMPENSATION -3.0f
 // Altitude of the location
 #define ALTITUDE 277.0f
 Adafruit_BME280 bme;
 bool bmeOK = false;
-
 
 /* miscellaneous */
 String chipId = "";
@@ -278,7 +279,9 @@ void readCO2()
 
     float CO2;
     CO2 = myMHZ19.getCO2(); // Request CO2 (as ppm)
-    if (CO2 > 0.0f)         // reading is sometimes zero -> don't publish zero values
+    float mhzTemp = myMHZ19.getTemperature();
+    readCount++;
+    if (CO2 > 0.0f && !(readCount <= 4 && CO2 > 1400)) // reading is sometimes zero or too high on the first readings -> don't publish obviously wrong values
     {
       showCO2(CO2);
       if (bmeOK)
@@ -296,9 +299,9 @@ void readCO2()
       {
         timeWithReadingAbove400 = millis();
       }
-      if (millis() - timeWithReadingAbove400 > 1200000)
+      if (millis() - timeWithReadingAbove400 > 600000)
       {
-        //All readings in the last 20 Minutes have been below 400 -> calibrate
+        //All readings in the last 10 Minutes have been below 400 -> calibrate
         Serial.println("Calibrating ..");
         myMHZ19.calibrate();
       }
@@ -315,9 +318,11 @@ void readCO2()
 
         sensor.addField("rssi", WiFi.RSSI());
         sensor.addField("ppm", CO2);
+        sensor.addField("mhzTemp", mhzTemp);
+        sensor.addField("readCountSinceLastBoot", readCount);
         if (bmeOK)
         {
-          float pressure =  bme.readPressure();
+          float pressure = bme.readPressure();
           sensor.addField("seaLevelPressure", bme.seaLevelForAltitude(ALTITUDE, pressure));
           sensor.addField("temp", temp);
           sensor.addField("tempCompensation", tempCompensation);
@@ -325,6 +330,7 @@ void readCO2()
           sensor.addField("pressure", pressure);
         }
         client.writePoint(sensor);
+        lastSuccessfulWriteTimer = millis();
       }
     }
   }
@@ -588,7 +594,7 @@ void setup()
   MHZ19OK = myMHZ19.errorCode == RESULT_OK;
   myMHZ19.setRange(5000);
   myMHZ19.autoCalibration(false);
-  
+
   initFastLED();
 
   if (!bme.begin(0x76, &Wire))
@@ -604,9 +610,8 @@ void setup()
                     Adafruit_BME280::SAMPLING_X1, // pressure
                     Adafruit_BME280::SAMPLING_X1, // humidity
                     Adafruit_BME280::FILTER_OFF);
-    
-    bme.setTemperatureCompensation(TEMP_COMPENSATION) ;
-    
+
+    bme.setTemperatureCompensation(TEMP_COMPENSATION);
   }
 
   readCO2();
@@ -721,5 +726,12 @@ void loop()
     }
     checkCount++;
     lastUpdateTimer = millis();
+  }
+  if (!isWiFiOK && strcmp(useWifi, "1") == 0 && strcmp(influxDBBucket, "") != 0 && strcmp(influxDBOrg, "") != 0 && strcmp(influxDBBucket, "") != 0 && strcmp(influxDBToken, "") != 0)
+  {
+    if (millis() - lastSuccessfulWriteTimer > 3600000)
+    {
+      ESP.restart();
+    }
   }
 }
