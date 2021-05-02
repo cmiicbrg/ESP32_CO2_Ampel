@@ -124,6 +124,7 @@ void checkUpdate()
   if (WiFi.isConnected())
   {
     WiFiClientSecure *client = new WiFiClientSecure;
+    client->setInsecure();
     if (client)
     {
       {
@@ -178,12 +179,14 @@ void processOTAUpdate()
   if (WiFi.isConnected())
   {
     WiFiClientSecure *client = new WiFiClientSecure;
+    client->setInsecure();
     if (client)
     {
       {
         // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
         HTTPClient https;
         https.setUserAgent(deviceName + chipId + " " + VERSION);
+
         Serial.print("[HTTPS] begin...\n");
         if (https.begin(*client, firmwarePath))
         { // HTTPS
@@ -240,7 +243,6 @@ void processOTAUpdate()
 
               Serial.println("Update successfully completed. Rebooting.");
               ESP.restart();
-              
             }
             else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY)
             {
@@ -587,6 +589,7 @@ void setup()
       Serial.println(firmwarePath);
     }
     client.setConnectionParams(influxDBURL, influxDBOrg, influxDBBucket, influxDBToken);
+    client.setInsecure();
     shouldWriteToInflux = client.validateConnection();
   }
 
