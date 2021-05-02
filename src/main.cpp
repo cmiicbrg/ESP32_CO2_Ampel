@@ -240,6 +240,7 @@ void processOTAUpdate()
 
               Serial.println("Update successfully completed. Rebooting.");
               ESP.restart();
+              
             }
             else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY)
             {
