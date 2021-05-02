@@ -95,6 +95,13 @@ unsigned long lastUpdateTimer = 0;
 unsigned int checkCount = 0;
 
 unsigned long timeWithReadingAbove400 = 0;
+unsigned long timeWithReadingBelow500 = 0;
+
+unsigned int sampleCounter = 0;
+#define SAMPLE_SIZE 30
+float samples[SAMPLE_SIZE];
+unsigned int s1DiffBelowThresholdCount = 0;
+//float diffs[SAMPLE_SIZE];
 
 void setChipId()
 {
@@ -302,14 +309,64 @@ void readCO2()
       {
         timeWithReadingAbove400 = millis();
       }
+      if (CO2 < 500.0f)
+      {
+        timeWithReadingBelow500 = millis();
+      }
       if (millis() - timeWithReadingAbove400 > 600000)
       {
-        //All readings in the last 10 Minutes have been below 400 -> calibrate
+        // All readings in the last 10 Minutes have been below 400 -> calibrate
         Serial.println("Calibrating ..");
         myMHZ19.calibrate();
       }
+      samples[sampleCounter % SAMPLE_SIZE] = CO2;
+      float ssDiff = 0;
+      float s1Diff = 0;
+      // float s2Diff = 0;
+      // float s3Diff = 0;
+      // float s4Diff = 0;
+      // float s5Diff = 0;
 
-      lastCO2 = CO2;
+      if (readCount >= SAMPLE_SIZE)
+      {
+        ssDiff = samples[sampleCounter] - samples[(sampleCounter + 1) % SAMPLE_SIZE];
+        if (CO2_LIGHT_DEBUG)
+        {
+          Serial.print("ssDiff: ");
+          Serial.println(ssDiff);
+        }
+      }
+      if (readCount > SAMPLE_SIZE / 5)
+      {
+        s1Diff = samples[sampleCounter] - samples[(sampleCounter - SAMPLE_SIZE / 5) % SAMPLE_SIZE];
+        if (s1Diff < -15)
+        {
+          s1DiffBelowThresholdCount++;
+        }
+        else
+        {
+          s1DiffBelowThresholdCount = 0;
+        }
+        if (s1DiffBelowThresholdCount >= SAMPLE_SIZE && ssDiff < -400)
+        {
+          if (millis() - timeWithReadingBelow500 > 14400000)
+          {
+            Serial.println("Calibrating ..");
+            myMHZ19.calibrate();
+          }
+        }
+        if (CO2_LIGHT_DEBUG)
+        {
+          Serial.print("s1Diff: ");
+          Serial.println(s1Diff);
+        }
+      }
+
+      sampleCounter++;
+      if (sampleCounter >= SAMPLE_SIZE)
+      {
+        sampleCounter = 0;
+      }
 
       if (isWiFiOK && shouldWriteToInflux)
       {
@@ -323,6 +380,13 @@ void readCO2()
         sensor.addField("ppm", CO2);
         sensor.addField("mhzTemp", mhzTemp);
         sensor.addField("readCountSinceLastBoot", readCount);
+        sensor.addField("ssDiff", ssDiff);
+        sensor.addField("s1Diff", s1Diff);
+        sensor.addField("timeAbove500", millis() - timeWithReadingBelow500);
+        // sensor.addField("s2Diff", s2Diff);
+        // sensor.addField("s3Diff", s3Diff);
+        // sensor.addField("s4Diff", s4Diff);
+        // sensor.addField("s5Diff", s5Diff);
         if (bmeOK)
         {
           float pressure = bme.readPressure();
@@ -335,6 +399,8 @@ void readCO2()
         client.writePoint(sensor);
         lastSuccessfulWriteTimer = millis();
       }
+
+      lastCO2 = CO2;
     }
   }
 }
