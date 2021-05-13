@@ -39,6 +39,7 @@ char useWifi[2] = "1";
 char useBLE[2] = "0";
 bool shouldShowPortal = false;
 bool portalRunning = false;
+char tempOffsetBME[5] = "-3.0";
 
 WiFiManager wm;
 WiFiManagerParameter influxDBURLParam("influxDBURLID", "Influx DB URL");
@@ -49,6 +50,7 @@ WiFiManagerParameter lastestVersionURLParam("lastestVersionURLID", "URL with str
 WiFiManagerParameter firmwarePathParam("firmwarePathID", "Urlpath of firmware.bin");
 WiFiManagerParameter useWifiParam("useWifiID", "Use Wifi 1/0", useWifi, 2);
 WiFiManagerParameter useBLEParam("useBLEID", "Use BLE 1/0", useBLE, 2);
+WiFiManagerParameter tempOffsetBMEParam("tempOffsetBME", "Temperature offset for BME", tempOffsetBME, 5);
 
 /* BLE */
 #define SERVICE_UUID "7ec15f94-396e-11eb-adc1-0242ac120002"
@@ -77,7 +79,7 @@ bool shouldWriteToInflux = false;
 
 /* BME280 */
 // Temperature compensation for the setup
-#define TEMP_COMPENSATION -3.0f
+// #define TEMP_COMPENSATION -3.0f
 // Altitude of the location
 #define ALTITUDE 277.0f
 Adafruit_BME280 bme;
@@ -383,10 +385,6 @@ void readCO2()
         sensor.addField("ssDiff", ssDiff);
         sensor.addField("s1Diff", s1Diff);
         sensor.addField("timeAbove500", millis() - timeWithReadingBelow500);
-        // sensor.addField("s2Diff", s2Diff);
-        // sensor.addField("s3Diff", s3Diff);
-        // sensor.addField("s4Diff", s4Diff);
-        // sensor.addField("s5Diff", s5Diff);
         if (bmeOK)
         {
           float pressure = bme.readPressure();
@@ -472,6 +470,10 @@ void loadParamsFromSpiffs()
         {
           strcpy(useBLE, jsonDoc["useBLE"]);
         }
+        if (jsonDoc.containsKey("tempOffsetBME"))
+        {
+          strcpy(tempOffsetBME, jsonDoc["tempOffsetBME"]);
+        }
       }
       else
       {
@@ -501,6 +503,7 @@ void storeParamsInJSON()
   jsonDoc["firmwarePath"] = firmwarePath;
   jsonDoc["useWifi"] = useWifi;
   jsonDoc["useBLE"] = useBLE;
+  jsonDoc["tempOffsetBME"] = tempOffsetBME;
 
   File configFile = SPIFFS.open("/config.json", "w");
   if (!configFile)
@@ -531,6 +534,8 @@ void saveParams()
 
     strcpy(useWifi, useWifiParam.getValue());
     strcpy(useBLE, useBLEParam.getValue());
+
+    strcpy(tempOffsetBME, tempOffsetBMEParam.getValue());
 
     storeParamsInJSON();
 
@@ -595,6 +600,7 @@ void setupWifi()
   firmwarePathParam.setValue(firmwarePath, 32);
   useWifiParam.setValue(useWifi, 2);
   useBLEParam.setValue(useBLE, 2);
+  tempOffsetBMEParam.setValue(tempOffsetBME, 5);
 
   wm.addParameter(&influxDBURLParam);
   wm.addParameter(&influxDBOrgParam);
@@ -604,6 +610,7 @@ void setupWifi()
   wm.addParameter(&firmwarePathParam);
   wm.addParameter(&useWifiParam);
   wm.addParameter(&useBLEParam);
+  wm.addParameter(&tempOffsetBMEParam);
 
   wm.setSaveParamsCallback(saveParams);
   std::vector<const char *> menu = {"wifi", "info", "param", "sep", "restart", "exit"};
@@ -681,7 +688,8 @@ void setup()
                     Adafruit_BME280::SAMPLING_X1, // humidity
                     Adafruit_BME280::FILTER_OFF);
 
-    bme.setTemperatureCompensation(TEMP_COMPENSATION);
+    //bme.setTemperatureCompensation(TEMP_COMPENSATION);
+    bme.setTemperatureCompensation(atof(tempOffsetBME));
   }
 
   readCO2();
