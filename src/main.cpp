@@ -51,6 +51,7 @@ WiFiManagerParameter firmwarePathParam("firmwarePathID", "Urlpath of firmware.bi
 WiFiManagerParameter useWifiParam("useWifiID", "Use Wifi 1/0", useWifi, 2);
 WiFiManagerParameter useBLEParam("useBLEID", "Use BLE 1/0", useBLE, 2);
 WiFiManagerParameter tempOffsetBMEParam("tempOffsetBME", "Temperature offset for BME", tempOffsetBME, 5);
+WiFiManagerParameter calibrateNowParam("calibrateNow", "Calibrate MH-Z19B now to 400 ppm", "0", 2);
 
 /* BLE */
 #define SERVICE_UUID "7ec15f94-396e-11eb-adc1-0242ac120002"
@@ -558,6 +559,12 @@ void saveParams()
 
     client.setConnectionParams(influxDBURL, influxDBOrg, influxDBBucket, influxDBToken);
     shouldWriteToInflux = client.validateConnection();
+
+    if (strcmp(calibrateNowParam.getValue(), "1") == 0)
+    {
+      Serial.println("Calibrating...");
+      myMHZ19.calibrate();
+    }
   }
 }
 
@@ -611,6 +618,7 @@ void setupWifi()
   wm.addParameter(&useWifiParam);
   wm.addParameter(&useBLEParam);
   wm.addParameter(&tempOffsetBMEParam);
+  wm.addParameter(&calibrateNowParam);
 
   wm.setSaveParamsCallback(saveParams);
   std::vector<const char *> menu = {"wifi", "info", "param", "sep", "restart", "exit"};
