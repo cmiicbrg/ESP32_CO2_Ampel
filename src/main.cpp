@@ -4,10 +4,6 @@
 #include <ArduinoJson.h> // https://github.com/bblanchon/ArduinoJson
 #include <SPIFFS.h>
 
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEServer.h>
-
 #include <Update.h>
 #include "Version.h"
 
@@ -20,7 +16,7 @@
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 
-//Set to false to prevent leaking secrets in serial console
+// Set to false to prevent leaking secrets in serial console
 #define CO2_WIFI_DEBUG false
 #define CO2_LIGHT_DEBUG false
 #define FORMAT_SPIFFS_ON_FAIL true
@@ -36,7 +32,6 @@ char influxDBToken[128] = "";
 char lastestVersionURL[60] = "";
 char firmwarePath[60] = "";
 char useWifi[2] = "1";
-char useBLE[2] = "0";
 bool shouldShowPortal = false;
 bool portalRunning = false;
 char tempOffsetBME[5] = "-3.0";
@@ -49,16 +44,9 @@ WiFiManagerParameter influxDBTokenParam("influxDBTokenID", "Influx DB Token");
 WiFiManagerParameter lastestVersionURLParam("lastestVersionURLID", "URL with string of last version number");
 WiFiManagerParameter firmwarePathParam("firmwarePathID", "Urlpath of firmware.bin");
 WiFiManagerParameter useWifiParam("useWifiID", "Use Wifi 1/0", useWifi, 2);
-WiFiManagerParameter useBLEParam("useBLEID", "Use BLE 1/0", useBLE, 2);
 WiFiManagerParameter tempOffsetBMEParam("tempOffsetBME", "Temperature offset for BME", tempOffsetBME, 5);
 WiFiManagerParameter calibrateNowParam("calibrateNow", "Calibrate MH-Z19B now to 400 ppm", "0", 2);
 
-/* BLE */
-#define SERVICE_UUID "7ec15f94-396e-11eb-adc1-0242ac120002"
-#define CHARACTERISTIC_UUID "7ec161e2-396e-11eb-adc1-0242ac120002"
-BLECharacteristic *pCharacteristic;
-bool deviceConnected = false;
-bool shouldUseBluetooth = false;
 
 /* MH Z19B */
 #define RX_PIN 16
@@ -104,7 +92,7 @@ unsigned int sampleCounter = 0;
 #define SAMPLE_SIZE 30
 float samples[SAMPLE_SIZE];
 unsigned int s1DiffBelowThresholdCount = 0;
-//float diffs[SAMPLE_SIZE];
+// float diffs[SAMPLE_SIZE];
 
 void setChipId()
 {
@@ -115,19 +103,6 @@ void setChipId()
   }
   chipId = String(lchipId);
 }
-
-class MyServerCallbacks : public BLEServerCallbacks
-{
-  void onConnect(BLEServer *pServer)
-  {
-    deviceConnected = true;
-  };
-
-  void onDisconnect(BLEServer *pServer)
-  {
-    deviceConnected = false;
-  }
-};
 
 void checkUpdate()
 {
@@ -286,7 +261,7 @@ void readCO2()
 {
   if (MHZ19OK)
   {
-    //bme.takeForcedMeasurement();
+    // bme.takeForcedMeasurement();
     float temp = bme.readTemperature();
     float tempCompensation = bme.getTemperatureCompensation();
 
@@ -420,14 +395,14 @@ void initFastLED()
 
 void loadParamsFromSpiffs()
 {
-  //read configuration from FS json
+  // read configuration from FS json
   Serial.println("mounting FS...");
 
   if (SPIFFS.begin(FORMAT_SPIFFS_ON_FAIL))
   {
     if (SPIFFS.exists("/config.json"))
     {
-      //file exists, reading and loading
+      // file exists, reading and loading
       File configFile = SPIFFS.open("/config.json", "r");
       if (configFile)
       {
@@ -467,10 +442,6 @@ void loadParamsFromSpiffs()
         {
           strcpy(useWifi, jsonDoc["useWifi"]);
         }
-        if (jsonDoc.containsKey("useBLE"))
-        {
-          strcpy(useBLE, jsonDoc["useBLE"]);
-        }
         if (jsonDoc.containsKey("tempOffsetBME"))
         {
           strcpy(tempOffsetBME, jsonDoc["tempOffsetBME"]);
@@ -503,7 +474,6 @@ void storeParamsInJSON()
   jsonDoc["lastestVersionURL"] = lastestVersionURL;
   jsonDoc["firmwarePath"] = firmwarePath;
   jsonDoc["useWifi"] = useWifi;
-  jsonDoc["useBLE"] = useBLE;
   jsonDoc["tempOffsetBME"] = tempOffsetBME;
 
   File configFile = SPIFFS.open("/config.json", "w");
@@ -534,7 +504,6 @@ void saveParams()
     strcpy(firmwarePath, firmwarePathParam.getValue());
 
     strcpy(useWifi, useWifiParam.getValue());
-    strcpy(useBLE, useBLEParam.getValue());
 
     strcpy(tempOffsetBME, tempOffsetBMEParam.getValue());
 
@@ -601,12 +570,11 @@ void setupWifi()
   influxDBURLParam.setValue(influxDBURL, 40);
   influxDBOrgParam.setValue(influxDBOrg, 32);
   influxDBBucketParam.setValue(influxDBBucket, 32);
-  //Don't set token, otherwise it can be read from the web portal
+  // Don't set token, otherwise it can be read from the web portal
   influxDBTokenParam.setValue("", 128);
   lastestVersionURLParam.setValue(lastestVersionURL, 32);
   firmwarePathParam.setValue(firmwarePath, 32);
   useWifiParam.setValue(useWifi, 2);
-  useBLEParam.setValue(useBLE, 2);
   tempOffsetBMEParam.setValue(tempOffsetBME, 5);
 
   wm.addParameter(&influxDBURLParam);
@@ -616,7 +584,6 @@ void setupWifi()
   wm.addParameter(&lastestVersionURLParam);
   wm.addParameter(&firmwarePathParam);
   wm.addParameter(&useWifiParam);
-  wm.addParameter(&useBLEParam);
   wm.addParameter(&tempOffsetBMEParam);
   wm.addParameter(&calibrateNowParam);
 
@@ -696,45 +663,12 @@ void setup()
                     Adafruit_BME280::SAMPLING_X1, // humidity
                     Adafruit_BME280::FILTER_OFF);
 
-    //bme.setTemperatureCompensation(TEMP_COMPENSATION);
+    // bme.setTemperatureCompensation(TEMP_COMPENSATION);
     bme.setTemperatureCompensation(atof(tempOffsetBME));
   }
 
   readCO2();
 
-  // can't use Bluetooth if InfluxDB uses TLS (memory allocation error,...)
-  shouldUseBluetooth = strcmp(useBLE, "1") == 0 && !(shouldWriteToInflux && strstr(influxDBURL, "https"));
-  if (CO2_LIGHT_DEBUG)
-  {
-    Serial.print("Should use Bluetooth: ");
-    Serial.println(useBLE);
-    Serial.print("May use Bluetooth: ");
-    Serial.println(shouldUseBluetooth);
-  }
-  if (shouldUseBluetooth)
-  {
-    if (CO2_LIGHT_DEBUG)
-    {
-      Serial.println("Setting up Bluetooth");
-    }
-    BLEDevice::init((deviceName + chipId).c_str());
-    BLEServer *pServer = BLEDevice::createServer();
-    pServer->setCallbacks(new MyServerCallbacks());
-    BLEService *pService = pServer->createService(SERVICE_UUID);
-    pCharacteristic = pService->createCharacteristic(
-        CHARACTERISTIC_UUID,
-        BLECharacteristic::PROPERTY_READ |
-            BLECharacteristic::PROPERTY_NOTIFY);
-    pCharacteristic->setValue(String(lastCO2).c_str());
-    pService->start();
-    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-
-    pAdvertising->addServiceUUID(SERVICE_UUID);
-    pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections issue
-    pAdvertising->setMinPreferred(0x12);
-    BLEDevice::startAdvertising();
-  }
 }
 
 void loop()
@@ -743,14 +677,6 @@ void loop()
   {
     isWiFiOK = WiFi.status() == WL_CONNECTED;
     readCO2();
-    if (shouldUseBluetooth)
-    {
-      pCharacteristic->setValue(String(lastCO2).c_str());
-      if (deviceConnected)
-      {
-        pCharacteristic->notify();
-      }
-    }
     getDataTimer = millis();
   }
   if (millis() - getBlinkTimer > 500)
@@ -802,7 +728,7 @@ void loop()
   {
     wm.process();
   }
-  if (isWiFiOK && ((millis() > 45000 && checkCount == 0) || millis() - lastUpdateTimer > 3600000)) //43200000))
+  if (isWiFiOK && ((millis() > 45000 && checkCount == 0) || millis() - lastUpdateTimer > 3600000)) // 43200000))
   {
     checkUpdate();
 
