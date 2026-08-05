@@ -10,6 +10,8 @@ jobs:
     name: Publish binaries
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
 
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -27,11 +29,13 @@ jobs:
     - name: Code static analysis
       run: platformio check
 
+    # Tags are usually pushed bare, so the release does not exist yet and has to
+    # be created here -- that is what the previous action did for us.
     - name: Upload binaries to release
-      uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
-      with:
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: .pio/build/esp32doit-devkit-v1/firmware.bin
-        asset_name: firmware.bin
-        tag: ${{ github.ref }}
-        overwrite: true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+          || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes ""
+        gh release upload "$GITHUB_REF_NAME" \
+          .pio/build/esp32doit-devkit-v1/firmware.bin --clobber
